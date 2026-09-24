@@ -1,20 +1,24 @@
 {
   "name": "bibliodrop-server",
   "version": "1.0.0",
-  "description": "",
-  "main": "server.js",
+  "description": "BiblioDrop backend server",
+  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "start": "node index.js",
+    "dev": "node --watch index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "cors": "^2.8.6",
     "dotenv": "^18.0.3",
     "express": "^5.2.1",
     "mongodb": "^7.6.0"
-  }
+  },
+  "keywords": [
+    "bibliodrop",
+    "express",
+    "mongodb"
+  ],
+  "author": "Nabdip Dev Sharma",
+  "license": "ISC",
+  "type": "commonjs"
 }
