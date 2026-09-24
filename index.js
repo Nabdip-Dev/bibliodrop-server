@@ -40,16 +40,29 @@ async function run() {
     });
 
     // =========================
-    // Books
+    // BOOKS
     // =========================
 
+    // Get books
     app.get("/books", async (req, res) => {
       try {
-        const result = await bookCollection.find().toArray();
+        const { librarianId } = req.query;
+
+        let query = {};
+
+        // If librarianId is provided,
+        // only show books added by that librarian
+        if (librarianId) {
+          query.librarianId = librarianId;
+        }
+
+        const result = await bookCollection.find(query).sort({
+          createdAt: -1,
+        }).toArray();
 
         res.json(result);
       } catch (error) {
-        console.error(error);
+        console.error("FETCH BOOKS ERROR:", error);
 
         res.status(500).json({
           message: "Failed to fetch books",
@@ -58,33 +71,33 @@ async function run() {
     });
 
 
-    // =========================
-    // books detils 
-    // =========================
-
+    // Get single book
     app.get("/books/:id", async (req, res) => {
       try {
-        const db = client.db(process.env.MONGODB_DATABASE);
-
-        const book = await db.collection("books").findOne({
+        const book = await bookCollection.findOne({
           _id: new ObjectId(req.params.id),
         });
 
         if (!book) {
-          return res.status(404).json({ message: "Book not found" });
+          return res.status(404).json({
+            message: "Book not found",
+          });
         }
 
         res.json(book);
       } catch (error) {
-        res.status(500).json({ message: "Failed to fetch book" });
+        console.error("BOOK DETAILS ERROR:", error);
+
+        res.status(500).json({
+          message: "Failed to fetch book",
+        });
       }
     });
 
 
+    // Add book
     app.post("/books", async (req, res) => {
       try {
-        const db = client.db(process.env.MONGODB_DATABASE);
-
         const book = {
           ...req.body,
           deliveryFee: Number(req.body.deliveryFee),
@@ -93,7 +106,7 @@ async function run() {
           createdAt: new Date(),
         };
 
-        const result = await db.collection("books").insertOne(book);
+        const result = await bookCollection.insertOne(book);
 
         res.status(201).json({
           message: "Book added successfully",
@@ -107,6 +120,43 @@ async function run() {
 
         res.status(500).json({
           message: "Failed to add book",
+        });
+      }
+    });
+
+
+    // Delete book
+    app.delete("/books/:id", async (req, res) => {
+      try {
+        const { librarianId } = req.query;
+
+        // Make sure librarianId is provided
+        if (!librarianId) {
+          return res.status(400).json({
+            message: "Librarian ID is required",
+          });
+        }
+
+        const result = await bookCollection.deleteOne({
+          _id: new ObjectId(req.params.id),
+          librarianId: librarianId,
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({
+            message: "Book not found or you do not own this book",
+          });
+        }
+
+        res.json({
+          success: true,
+          message: "Book deleted successfully",
+        });
+      } catch (error) {
+        console.error("DELETE BOOK ERROR:", error);
+
+        res.status(500).json({
+          message: "Failed to delete book",
         });
       }
     });
