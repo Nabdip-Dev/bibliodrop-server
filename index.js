@@ -57,6 +57,29 @@ async function run() {
       }
     });
 
+
+    // =========================
+    // books detils 
+    // =========================
+
+    app.get("/books/:id", async (req, res) => {
+      try {
+        const db = client.db(process.env.MONGODB_DATABASE);
+
+        const book = await db.collection("books").findOne({
+          _id: new ObjectId(req.params.id),
+        });
+
+        if (!book) {
+          return res.status(404).json({ message: "Book not found" });
+        }
+
+        res.json(book);
+      } catch (error) {
+        res.status(500).json({ message: "Failed to fetch book" });
+      }
+    });
+
     // =========================
     // Users
     // =========================
