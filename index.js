@@ -125,6 +125,57 @@ async function run() {
     });
 
 
+    app.put("/books/:id", async (req, res) => {
+      try {
+        const { librarianId } = req.body;
+
+        if (!librarianId) {
+          return res.status(400).json({
+            message: "Librarian ID is required",
+          });
+        }
+
+        const { title, author, category, description, deliveryFee, coverImage } =
+          req.body;
+
+        const result = await bookCollection.updateOne(
+          {
+            _id: new ObjectId(req.params.id),
+            librarianId: librarianId,
+          },
+          {
+            $set: {
+              title,
+              author,
+              category,
+              description,
+              deliveryFee: Number(deliveryFee),
+              coverImage,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({
+            message: "Book not found or you do not own this book",
+          });
+        }
+
+        res.json({
+          success: true,
+          message: "Book updated successfully",
+        });
+      } catch (error) {
+        console.error("UPDATE BOOK ERROR:", error);
+
+        res.status(500).json({
+          message: "Failed to update book",
+        });
+      }
+    });
+
+
     // Delete book
     app.delete("/books/:id", async (req, res) => {
       try {
