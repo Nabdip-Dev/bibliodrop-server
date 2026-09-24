@@ -80,6 +80,37 @@ async function run() {
       }
     });
 
+
+    app.post("/books", async (req, res) => {
+      try {
+        const db = client.db(process.env.MONGODB_DATABASE);
+
+        const book = {
+          ...req.body,
+          deliveryFee: Number(req.body.deliveryFee),
+          status: "available",
+          published: true,
+          createdAt: new Date(),
+        };
+
+        const result = await db.collection("books").insertOne(book);
+
+        res.status(201).json({
+          message: "Book added successfully",
+          book: {
+            _id: result.insertedId,
+            ...book,
+          },
+        });
+      } catch (error) {
+        console.error("ADD BOOK ERROR:", error);
+
+        res.status(500).json({
+          message: "Failed to add book",
+        });
+      }
+    });
+
     // =========================
     // Users
     // =========================
