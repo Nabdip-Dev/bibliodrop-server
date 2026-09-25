@@ -248,6 +248,64 @@ async function run() {
     });
 
 
+    // ================================
+    // Get Reviews For A Book
+    // ================================
+    app.get("/books/:id/reviews", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            message: "Invalid book ID",
+          });
+        }
+
+        const reviews = await reviewCollection
+          .find({
+            bookId: id,
+          })
+          .sort({
+            createdAt: -1,
+          })
+          .toArray();
+
+        const formattedReviews = await Promise.all(
+          reviews.map(async (review) => {
+            const user = await userCollection.findOne({
+              $or: [
+                { id: review.userId },
+                ...(ObjectId.isValid(review.userId)
+                  ? [{ _id: new ObjectId(review.userId) }]
+                  : []),
+              ],
+            });
+
+            return {
+              ...review,
+              userName:
+                user?.name ||
+                review.userName ||
+                "Anonymous Reader",
+
+              userImage:
+                user?.image ||
+                review.userImage ||
+                "",
+            };
+          })
+        );
+
+        return res.json(formattedReviews);
+      } catch (error) {
+        console.error("GET BOOK REVIEWS ERROR:", error);
+
+        return res.status(500).json({
+          message: "Failed to fetch reviews",
+        });
+      }
+    });
+
     // Delete book
     app.delete("/books/:id", async (req, res) => {
       try {
@@ -472,17 +530,146 @@ async function run() {
       }
     });
 
+
     // =========================
-    // Reviews
+    // CREATE REVIEW
     // =========================
 
+    app.post("/reviews", async (req, res) => {
+      try {
+        const {
+          userId,
+          deliveryId,
+          bookId,
+          rating,
+          comment,
+        } = req.body;
+
+        if (
+          !userId ||
+          !deliveryId ||
+          !bookId ||
+          !rating ||
+          !comment?.trim()
+        ) {
+          return res.status(400).json({
+            message: "All review fields are required",
+          });
+        }
+
+        const numericRating = Number(rating);
+
+        if (
+          !Number.isInteger(numericRating) ||
+          numericRating < 1 ||
+          numericRating > 5
+        ) {
+          return res.status(400).json({
+            message: "Rating must be between 1 and 5",
+          });
+        }
+
+        // Check delivery
+        const delivery = await deliveryCollection.findOne({
+          _id: new ObjectId(deliveryId),
+          userId: userId,
+        });
+
+        if (!delivery) {
+          return res.status(404).json({
+            message: "Delivery not found",
+          });
+        }
+
+        // Only delivered books can be reviewed
+        if (
+          delivery.status !== "Delivered" &&
+          delivery.status !== "Completed"
+        ) {
+          return res.status(400).json({
+            message: "You can review a book only after delivery",
+          });
+        }
+
+        // Prevent duplicate review
+        const existingReview = await db
+          .collection("reviews")
+          .findOne({
+            userId,
+            deliveryId,
+          });
+
+        if (existingReview) {
+          return res.status(400).json({
+            message: "You have already reviewed this delivery",
+          });
+        }
+
+        // Get user information
+        const user = await db.collection("user").findOne({
+          id: userId,
+        });
+
+        // Create review
+        const review = {
+          userId,
+          deliveryId,
+          bookId,
+          bookTitle: delivery.bookTitle || "Book",
+          rating: numericRating,
+          comment: comment.trim(),
+
+          // User information
+          userName: user?.name || "Anonymous Reader",
+          userImage: user?.image || "",
+
+          createdAt: new Date(),
+        };
+
+        const result = await db
+          .collection("reviews")
+          .insertOne(review);
+
+        res.status(201).json({
+          success: true,
+          message: "Review submitted successfully",
+          review: {
+            _id: result.insertedId,
+            ...review,
+          },
+        });
+      } catch (error) {
+        console.error("CREATE REVIEW ERROR:", error);
+
+        res.status(500).json({
+          message: "Failed to submit review",
+        });
+      }
+    });
+
+
+    // =========================
+    // GET USER REVIEWS
+    // =========================
     app.get("/reviews", async (req, res) => {
       try {
-        const result = await reviewCollection.find().toArray();
+        const { userId } = req.query;
 
-        res.json(result);
+        if (!userId) {
+          return res.status(400).json({
+            message: "userId is required",
+          });
+        }
+
+        const reviews = await db
+          .collection("reviews")
+          .find({ userId })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.json(reviews);
       } catch (error) {
-        console.error(error);
+        console.error("GET REVIEWS ERROR:", error);
 
         res.status(500).json({
           message: "Failed to fetch reviews",
