@@ -2,8 +2,11 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const Stripe = require("stripe");
 
 dotenv.config();
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -70,6 +73,75 @@ async function run() {
       }
     });
 
+    // ssss
+    app.post("/create-checkout-session", async (req, res) => {
+      try {
+        const { bookId, quantity, userId } = req.body;
+
+        if (!bookId || !quantity || !userId) {
+          return res.status(400).json({
+            message: "bookId, quantity and userId are required",
+          });
+        }
+
+        const book = await bookCollection.findOne({
+          _id: new ObjectId(bookId),
+        });
+
+        if (!book) {
+          return res.status(404).json({
+            message: "Book not found",
+          });
+        }
+
+        if (book.status !== "available") {
+          return res.status(400).json({
+            message: "This book is not available",
+          });
+        }
+
+        const safeQuantity = Math.max(1, Math.min(10, Number(quantity)));
+        const deliveryFee = Number(book.deliveryFee) || 0;
+        const totalAmount = deliveryFee * safeQuantity;
+
+        const session = await stripe.checkout.sessions.create({
+          mode: "payment",
+
+          line_items: [
+            {
+              price_data: {
+                currency: "bdt",
+                product_data: {
+                  name: `Delivery: ${book.title}`,
+                },
+                unit_amount: Math.round(deliveryFee * 100),
+              },
+              quantity: safeQuantity,
+            },
+          ],
+
+          success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.CLIENT_URL}/books/${bookId}`,
+
+          metadata: {
+            bookId: String(bookId),
+            userId: String(userId),
+            quantity: String(safeQuantity),
+            totalAmount: String(totalAmount),
+          },
+        });
+
+        res.json({
+          url: session.url,
+        });
+      } catch (error) {
+        console.error("STRIPE CHECKOUT ERROR:", error);
+
+        res.status(500).json({
+          message: "Failed to create checkout session",
+        });
+      }
+    });
 
     // Get single book
     app.get("/books/:id", async (req, res) => {
@@ -212,6 +284,80 @@ async function run() {
       }
     });
 
+    // sssssssssss
+    app.get("/verify-payment/:sessionId", async (req, res) => {
+      try {
+        const session = await stripe.checkout.sessions.retrieve(
+          req.params.sessionId
+        );
+
+        if (session.payment_status !== "paid") {
+          return res.status(400).json({
+            message: "Payment has not been completed",
+          });
+        }
+
+        const {
+          bookId,
+          userId,
+          quantity,
+          totalAmount,
+        } = session.metadata;
+
+        const existingDelivery = await deliveryCollection.findOne({
+          stripeSessionId: session.id,
+        });
+
+        if (existingDelivery) {
+          return res.json({
+            success: true,
+            message: "Delivery already created",
+            delivery: existingDelivery,
+          });
+        }
+
+        const book = await bookCollection.findOne({
+          _id: new ObjectId(bookId),
+        });
+
+        if (!book) {
+          return res.status(404).json({
+            message: "Book not found",
+          });
+        }
+
+        const delivery = {
+          stripeSessionId: session.id,
+          userId,
+          bookId,
+          bookTitle: book.title,
+          quantity: Number(quantity),
+          deliveryFee: Number(totalAmount),
+          status: "Pending",
+          paymentStatus: "Paid",
+          createdAt: new Date(),
+        };
+
+        const result = await deliveryCollection.insertOne(delivery);
+
+        res.json({
+          success: true,
+          paymentStatus: session.payment_status,
+          delivery: {
+            _id: result.insertedId,
+            ...delivery,
+          },
+        });
+      } catch (error) {
+        console.error("VERIFY PAYMENT ERROR:", error);
+
+        res.status(500).json({
+          message: "Failed to verify payment",
+        });
+      }
+    });
+
+
     // =========================
     // Users
     // =========================
@@ -230,23 +376,52 @@ async function run() {
       }
     });
 
+
     // =========================
     // Deliveries
     // =========================
-
     app.get("/deliveries", async (req, res) => {
       try {
-        const result = await deliveryCollection.find().toArray();
+        const { userId } = req.query;
 
-        res.json(result);
+        const query = {};
+
+        if (userId) {
+          query.userId = userId;
+        }
+
+        const deliveries = await deliveryCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        const deliveriesWithBooks = await Promise.all(
+          deliveries.map(async (delivery) => {
+            let book = null;
+
+            if (delivery.bookId && ObjectId.isValid(delivery.bookId)) {
+              book = await bookCollection.findOne({
+                _id: new ObjectId(delivery.bookId),
+              });
+            }
+
+            return {
+              ...delivery,
+              bookTitle: book?.title || "Book Delivery",
+            };
+          })
+        );
+
+        res.json(deliveriesWithBooks);
       } catch (error) {
-        console.error(error);
+        console.error("GET DELIVERIES ERROR:", error);
 
         res.status(500).json({
           message: "Failed to fetch deliveries",
         });
       }
     });
+
 
     // =========================
     // Reviews
