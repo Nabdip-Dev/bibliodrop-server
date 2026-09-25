@@ -478,76 +478,7 @@ async function run() {
       }
     });
 
-    // =========================================================
-    // ADMIN - CHANGE USER ROLE
-    // =========================================================
 
-    app.patch(
-      "/users/:id/role",
-      async (req, res) => {
-        try {
-          const { role } = req.body;
-
-          if (
-            !["user", "librarian", "admin"].includes(
-              role
-            )
-          ) {
-            return res.status(400).json({
-              message: "Invalid role",
-            });
-          }
-
-          const conditions = [];
-
-          if (isValidId(req.params.id)) {
-            conditions.push({
-              _id: new ObjectId(req.params.id),
-            });
-          }
-
-          conditions.push({
-            id: req.params.id,
-          });
-
-          const result =
-            await userCollection.updateOne(
-              {
-                $or: conditions,
-              },
-              {
-                $set: {
-                  role,
-                  updatedAt: new Date(),
-                },
-              }
-            );
-
-          if (result.matchedCount === 0) {
-            return res.status(404).json({
-              message: "User not found",
-            });
-          }
-
-          res.json({
-            success: true,
-            message:
-              "User role updated successfully",
-            role,
-          });
-        } catch (error) {
-          console.error(
-            "UPDATE USER ROLE ERROR:",
-            error
-          );
-
-          res.status(500).json({
-            message:
-              "Failed to update user role",
-          });
-        }
-      }
-    );
 
     // =========================================================
     // BOOKS - PUBLIC + LIBRARIAN
@@ -1195,7 +1126,7 @@ async function run() {
 
           if (
             book.approvalStatus !==
-              "approved" ||
+            "approved" ||
             book.published !== true
           ) {
             return res.status(400).json({
@@ -1247,7 +1178,7 @@ async function run() {
                       unit_amount:
                         Math.round(
                           deliveryFee *
-                            100
+                          100
                         ),
                     },
 
@@ -1879,9 +1810,9 @@ async function run() {
 
           if (
             delivery.status !==
-              "Delivered" &&
+            "Delivered" &&
             delivery.status !==
-              "Completed"
+            "Completed"
           ) {
             return res.status(400).json({
               message:
@@ -2021,184 +1952,7 @@ async function run() {
       }
     );
 
-    // =========================================================
-    // EDIT REVIEW
-    // =========================================================
 
-    app.put(
-      "/reviews/:id",
-      async (req, res) => {
-        try {
-          const objectId =
-            getObjectId(
-              req.params.id
-            );
-
-          if (!objectId) {
-            return res.status(400).json({
-              message:
-                "Invalid review ID",
-            });
-          }
-
-          const {
-            userId,
-            rating,
-            comment,
-          } = req.body;
-
-          if (
-            !userId ||
-            !rating ||
-            !comment?.trim()
-          ) {
-            return res.status(400).json({
-              message:
-                "Rating and comment are required",
-            });
-          }
-
-          const numericRating =
-            Number(rating);
-
-          if (
-            !Number.isInteger(
-              numericRating
-            ) ||
-            numericRating < 1 ||
-            numericRating > 5
-          ) {
-            return res.status(400).json({
-              message:
-                "Rating must be between 1 and 5",
-            });
-          }
-
-          const result =
-            await reviewCollection.updateOne(
-              {
-                _id: objectId,
-                userId: String(
-                  userId
-                ),
-              },
-              {
-                $set: {
-                  rating:
-                    numericRating,
-                  comment:
-                    comment.trim(),
-                  updatedAt:
-                    new Date(),
-                },
-              }
-            );
-
-          if (
-            result.matchedCount === 0
-          ) {
-            return res.status(404).json({
-              message:
-                "Review not found or you do not own this review",
-            });
-          }
-
-          const updatedReview =
-            await reviewCollection.findOne(
-              {
-                _id: objectId,
-              }
-            );
-
-          res.json({
-            success: true,
-            message:
-              "Review updated successfully",
-            review:
-              updatedReview,
-          });
-        } catch (error) {
-          console.error(
-            "UPDATE REVIEW ERROR:",
-            error
-          );
-
-          res.status(500).json({
-            message:
-              "Failed to update review",
-          });
-        }
-      }
-    );
-
-    // =========================================================
-    // DELETE REVIEW
-    // =========================================================
-
-    app.delete(
-      "/reviews/:id",
-      async (req, res) => {
-        try {
-          const objectId =
-            getObjectId(
-              req.params.id
-            );
-
-          if (!objectId) {
-            return res.status(400).json({
-              message:
-                "Invalid review ID",
-            });
-          }
-
-          const {
-            userId,
-          } = req.query;
-
-          if (!userId) {
-            return res.status(400).json({
-              message:
-                "userId is required",
-            });
-          }
-
-          const result =
-            await reviewCollection.deleteOne(
-              {
-                _id: objectId,
-                userId: String(
-                  userId
-                ),
-              }
-            );
-
-          if (
-            result.deletedCount === 0
-          ) {
-            return res.status(404).json({
-              message:
-                "Review not found or you do not own this review",
-            });
-          }
-
-          res.json({
-            success: true,
-            message:
-              "Review deleted successfully",
-          });
-        } catch (error) {
-          console.error(
-            "DELETE REVIEW ERROR:",
-            error
-          );
-
-          res.status(500).json({
-            message:
-              "Failed to delete review",
-          });
-        }
-      }
-    );
 
     // =========================================================
     // TRANSACTIONS
