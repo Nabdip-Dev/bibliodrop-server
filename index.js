@@ -110,7 +110,7 @@ async function run() {
           line_items: [
             {
               price_data: {
-                currency: "bdt",
+                currency: "inr",
                 product_data: {
                   name: `Delivery: ${book.title}`,
                 },
@@ -422,6 +422,55 @@ async function run() {
       }
     });
 
+
+    app.patch("/deliveries/:id/status", async (req, res) => {
+      try {
+        const { status } = req.body;
+
+        const allowedStatuses = [
+          "Pending",
+          "Approved",
+          "Out for Delivery",
+          "Delivered",
+        ];
+
+        if (!allowedStatuses.includes(status)) {
+          return res.status(400).json({
+            message: "Invalid delivery status",
+          });
+        }
+
+        const result = await deliveryCollection.updateOne(
+          {
+            _id: new ObjectId(req.params.id),
+          },
+          {
+            $set: {
+              status,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({
+            message: "Delivery not found",
+          });
+        }
+
+        res.json({
+          success: true,
+          message: "Delivery status updated successfully",
+          status,
+        });
+      } catch (error) {
+        console.error("UPDATE DELIVERY STATUS ERROR:", error);
+
+        res.status(500).json({
+          message: "Failed to update delivery status",
+        });
+      }
+    });
 
     // =========================
     // Reviews
