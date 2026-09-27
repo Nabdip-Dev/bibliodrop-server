@@ -1910,47 +1910,33 @@ async function run() {
     // GET USER REVIEWS
     // =========================================================
 
-    app.get(
-      "/reviews",
-      async (req, res) => {
-        try {
-          const {
-            userId,
-          } = req.query;
+    app.get("/reviews", async (req, res) => {
+      try {
+        const { userId } = req.query;
 
-          if (!userId) {
-            return res.status(400).json({
-              message:
-                "userId is required",
-            });
-          }
+        const query = {};
 
-          const reviews =
-            await reviewCollection
-              .find({
-                userId: String(
-                  userId
-                ),
-              })
-              .sort({
-                createdAt: -1,
-              })
-              .toArray();
-
-          res.json(reviews);
-        } catch (error) {
-          console.error(
-            "GET REVIEWS ERROR:",
-            error
-          );
-
-          res.status(500).json({
-            message:
-              "Failed to fetch reviews",
-          });
+        // userId দিলে শুধু ওই user's reviews
+        // userId না দিলে সব reviews
+        if (userId) {
+          query.userId = String(userId);
         }
+
+        const reviews = await reviewCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .limit(50)
+          .toArray();
+
+        res.json(reviews);
+      } catch (error) {
+        console.error("GET REVIEWS ERROR:", error);
+
+        res.status(500).json({
+          message: "Failed to fetch reviews",
+        });
       }
-    );
+    });
 
 
 
