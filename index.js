@@ -971,9 +971,7 @@ async function run() {
       "/books/:id/status",
       async (req, res) => {
         try {
-          const objectId = getObjectId(
-            req.params.id
-          );
+          const objectId = getObjectId(req.params.id);
 
           if (!objectId) {
             return res.status(400).json({
@@ -986,27 +984,24 @@ async function run() {
             librarianId,
           } = req.body;
 
+          // Available:
+          // Unavailable:
+          // Out of Stock:
           const allowedStatuses = [
             "available",
-            "checked_out",
             "unavailable",
+            "out_of_stock",
           ];
 
-          if (
-            !allowedStatuses.includes(
-              status
-            )
-          ) {
+          if (!allowedStatuses.includes(status)) {
             return res.status(400).json({
-              message:
-                "Invalid book status",
+              message: "Invalid book status",
             });
           }
 
           if (!librarianId) {
             return res.status(400).json({
-              message:
-                "Librarian ID is required",
+              message: "Librarian ID is required",
             });
           }
 
@@ -1014,9 +1009,7 @@ async function run() {
             await bookCollection.updateOne(
               {
                 _id: objectId,
-                librarianId: String(
-                  librarianId
-                ),
+                librarianId: String(librarianId),
               },
               {
                 $set: {
@@ -1053,6 +1046,116 @@ async function run() {
           res.status(500).json({
             message:
               "Failed to update book status",
+          });
+        }
+      }
+    );
+
+    // =========================================================
+    // LIBRARIAN - PUBLISH / UNPUBLISH BOOK
+    // =========================================================
+
+    app.patch(
+      "/books/:id/publish",
+      async (req, res) => {
+        try {
+          const objectId = getObjectId(req.params.id);
+
+          if (!objectId) {
+            return res.status(400).json({
+              message: "Invalid book ID",
+            });
+          }
+
+          const {
+            published,
+            librarianId,
+          } = req.body;
+
+          if (typeof published !== "boolean") {
+            return res.status(400).json({
+              message:
+                "Published value must be true or false",
+            });
+          }
+
+          if (!librarianId) {
+            return res.status(400).json({
+              message:
+                "Librarian ID is required",
+            });
+          }
+
+          // Only approved books can be published.
+          if (published === true) {
+            const book =
+              await bookCollection.findOne({
+                _id: objectId,
+                librarianId: String(
+                  librarianId
+                ),
+              });
+
+            if (!book) {
+              return res.status(404).json({
+                message:
+                  "Book not found or you do not own this book",
+              });
+            }
+
+            if (
+              book.approvalStatus !==
+              "approved"
+            ) {
+              return res.status(400).json({
+                message:
+                  "Only approved books can be published",
+              });
+            }
+          }
+
+          const result =
+            await bookCollection.updateOne(
+              {
+                _id: objectId,
+                librarianId: String(librarianId),
+              },
+              {
+                $set: {
+                  published,
+                  updatedAt: new Date(),
+                },
+              }
+            );
+
+          if (result.matchedCount === 0) {
+            return res.status(404).json({
+              message:
+                "Book not found or you do not own this book",
+            });
+          }
+
+          const updatedBook =
+            await bookCollection.findOne({
+              _id: objectId,
+            });
+
+          res.json({
+            success: true,
+            message: published
+              ? "Book published successfully"
+              : "Book unpublished successfully",
+            book: updatedBook,
+          });
+        } catch (error) {
+          console.error(
+            "BOOK PUBLISH ERROR:",
+            error
+          );
+
+          res.status(500).json({
+            message:
+              "Failed to update book publication status",
           });
         }
       }
