@@ -1754,87 +1754,63 @@ async function run() {
     app.get(
       "/deliveries",
       verifyJwt,
+      requireRole("librarian"),
       async (req, res) => {
         try {
-          const {
-            userId,
+          // JWT থেকে logged-in librarian-এর ID নেওয়া হবে
+          const librarianId = String(req.user.sub);
+
+          // শুধু নিজের delivery
+          const query = {
             librarianId,
-          } = req.query;
+          };
 
-          const query = {};
+          const deliveries = await deliveryCollection
+            .find(query)
+            .sort({
+              createdAt: -1,
+            })
+            .toArray();
 
-          if (userId) {
-            query.userId =
-              String(userId);
-          }
+          const deliveriesWithBooks = await Promise.all(
+            deliveries.map(async (delivery) => {
+              let book = null;
 
-          if (librarianId) {
-            query.librarianId =
-              String(librarianId);
-          }
+              if (
+                delivery.bookId &&
+                isValidId(delivery.bookId)
+              ) {
+                book = await bookCollection.findOne({
+                  _id: new ObjectId(delivery.bookId),
+                });
+              }
 
-          const deliveries =
-            await deliveryCollection
-              .find(query)
-              .sort({
-                createdAt: -1,
-              })
-              .toArray();
+              const user = await getUser(
+                delivery.userId
+              );
 
-          const deliveriesWithBooks =
-            await Promise.all(
-              deliveries.map(
-                async (delivery) => {
-                  let book = null;
+              return {
+                ...delivery,
 
-                  if (
-                    delivery.bookId &&
-                    isValidId(
-                      delivery.bookId
-                    )
-                  ) {
-                    book =
-                      await bookCollection.findOne(
-                        {
-                          _id: new ObjectId(
-                            delivery.bookId
-                          ),
-                        }
-                      );
-                  }
+                bookTitle:
+                  book?.title ||
+                  delivery.bookTitle ||
+                  "Book Delivery",
 
-                  const user =
-                    await getUser(
-                      delivery.userId
-                    );
+                coverImage:
+                  book?.coverImage || "",
 
-                  return {
-                    ...delivery,
+                userName:
+                  user?.name ||
+                  "Unknown User",
 
-                    bookTitle:
-                      book?.title ||
-                      delivery.bookTitle ||
-                      "Book Delivery",
-
-                    coverImage:
-                      book?.coverImage ||
-                      "",
-
-                    userName:
-                      user?.name ||
-                      "Unknown User",
-
-                    userEmail:
-                      user?.email ||
-                      "",
-                  };
-                }
-              )
-            );
-
-          res.json(
-            deliveriesWithBooks
+                userEmail:
+                  user?.email || "",
+              };
+            })
           );
+
+          res.json(deliveriesWithBooks);
         } catch (error) {
           console.error(
             "GET DELIVERIES ERROR:",
@@ -1859,21 +1835,17 @@ async function run() {
       requireRole("librarian"),
       async (req, res) => {
         try {
-          const objectId =
-            getObjectId(
-              req.params.id
-            );
+          const objectId = getObjectId(
+            req.params.id
+          );
 
           if (!objectId) {
             return res.status(400).json({
-              message:
-                "Invalid delivery ID",
+              message: "Invalid delivery ID",
             });
           }
 
-          const {
-            status,
-          } = req.body;
+          const { status } = req.body;
 
           const allowedStatuses = [
             "Pending",
@@ -1883,35 +1855,39 @@ async function run() {
             "Cancelled",
           ];
 
-          if (
-            !allowedStatuses.includes(
-              status
-            )
-          ) {
+          if (!allowedStatuses.includes(status)) {
             return res.status(400).json({
               message:
                 "Invalid delivery status",
             });
           }
 
+          // JWT থেকে logged-in librarian
+          const librarianId = String(
+            req.user.sub
+          );
+
+          // IMPORTANT:
+          // Delivery + logged-in librarian দুটোই match করতে হবে
           const delivery =
-            await deliveryCollection.findOne(
-              {
-                _id: objectId,
-              }
-            );
+            await deliveryCollection.findOne({
+              _id: objectId,
+              librarianId,
+            });
 
           if (!delivery) {
             return res.status(404).json({
               message:
-                "Delivery not found",
+                "Delivery not found or you do not have permission to update this delivery",
             });
           }
 
+          // একই ownership condition দিয়ে update
           const result =
             await deliveryCollection.updateOne(
               {
                 _id: objectId,
+                librarianId,
               },
               {
                 $set: {
@@ -1921,12 +1897,10 @@ async function run() {
               }
             );
 
-          if (
-            result.matchedCount === 0
-          ) {
+          if (result.matchedCount === 0) {
             return res.status(404).json({
               message:
-                "Delivery not found",
+                "Delivery not found or you do not have permission to update this delivery",
             });
           }
 
@@ -1934,9 +1908,7 @@ async function run() {
           if (
             status === "Cancelled" &&
             delivery.bookId &&
-            isValidId(
-              delivery.bookId
-            )
+            isValidId(delivery.bookId)
           ) {
             await bookCollection.updateOne(
               {
@@ -1947,8 +1919,7 @@ async function run() {
               {
                 $set: {
                   status: "available",
-                  updatedAt:
-                    new Date(),
+                  updatedAt: new Date(),
                 },
               }
             );
