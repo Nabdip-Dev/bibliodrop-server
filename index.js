@@ -7,6 +7,7 @@ const {
   ObjectId,
 } = require("mongodb");
 const Stripe = require("stripe");
+const jwt = require("jsonwebtoken");
 
 dotenv.config();
 
@@ -14,6 +15,20 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// =========================================================
+// JWT CONFIGURATION
+// =========================================================
+
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
+const JWT_COOKIE_NAME = "bibliodrop_token";
+
+if (!JWT_SECRET) {
+  console.warn(
+    "WARNING: JWT_SECRET is not configured in .env"
+  );
+}
 
 app.use(
   cors({
@@ -80,6 +95,92 @@ async function run() {
     };
 
     // =========================================================
+    // JWT AUTHENTICATION HELPERS
+    // =========================================================
+
+    const getJwtFromCookie = (req) => {
+      const cookieHeader = req.headers.cookie || "";
+
+      const cookies = cookieHeader.split(";").reduce((acc, item) => {
+        const [key, ...valueParts] = item.trim().split("=");
+
+        if (!key) return acc;
+
+        acc[key] = valueParts.join("=");
+        return acc;
+      }, {});
+
+      return cookies[JWT_COOKIE_NAME] || null;
+    };
+
+    const verifyJwt = (req, res, next) => {
+      if (!JWT_SECRET) {
+        return res.status(500).json({
+          message: "JWT_SECRET is not configured on the server",
+        });
+      }
+
+      const token = getJwtFromCookie(req);
+
+      if (!token) {
+        return res.status(401).json({
+          message: "Authentication required",
+        });
+      }
+
+      try {
+        req.user = jwt.verify(token, JWT_SECRET);
+        next();
+      } catch (error) {
+        console.error("JWT VERIFY ERROR:", error.message);
+
+        return res.status(401).json({
+          message: "Invalid or expired authentication token",
+        });
+      }
+    };
+
+    const requireRole = (...allowedRoles) => {
+      return (req, res, next) => {
+        if (!req.user?.role) {
+          return res.status(403).json({
+            message: "User role is missing",
+          });
+        }
+
+        if (!allowedRoles.includes(req.user.role)) {
+          return res.status(403).json({
+            message: "You do not have permission to access this resource",
+          });
+        }
+
+        next();
+      };
+    };
+
+    const createJwtToken = (user) => {
+      if (!JWT_SECRET) {
+        throw new Error("JWT_SECRET is not configured");
+      }
+
+      const userId = user?.id || user?._id;
+
+      if (!userId) {
+        throw new Error("User ID is required to create JWT");
+      }
+
+      return jwt.sign(
+        {
+          sub: String(userId),
+          email: user.email || "",
+          role: user.role || "user",
+        },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRES_IN }
+      );
+    };
+
+    // =========================================================
     // HOME
     // =========================================================
 
@@ -91,7 +192,7 @@ async function run() {
     // ADMIN DASHBOARD STATS
     // =========================================================
 
-    app.get("/admin/stats", async (req, res) => {
+    app.get("/admin/stats", verifyJwt, requireRole("admin"), async (req, res) => {
       try {
         const totalUsers = await userCollection.countDocuments();
 
@@ -134,7 +235,7 @@ async function run() {
     // ADMIN - ALL BOOKS
     // =========================================================
 
-    app.get("/admin/books", async (req, res) => {
+    app.get("/admin/books", verifyJwt, requireRole("admin"), async (req, res) => {
       try {
         const {
           search = "",
@@ -227,7 +328,7 @@ async function run() {
     // ADMIN - PENDING BOOKS
     // =========================================================
 
-    app.get("/admin/books/pending", async (req, res) => {
+    app.get("/admin/books/pending", verifyJwt, requireRole("admin"), async (req, res) => {
       try {
         const books = await bookCollection
           .find({
@@ -273,6 +374,8 @@ async function run() {
 
     app.patch(
       "/admin/books/:id/approve",
+      verifyJwt,
+      requireRole("admin"),
       async (req, res) => {
         try {
           const { id } = req.params;
@@ -338,6 +441,8 @@ async function run() {
 
     app.patch(
       "/admin/books/:id/reject",
+      verifyJwt,
+      requireRole("admin"),
       async (req, res) => {
         try {
           const { id } = req.params;
@@ -403,6 +508,8 @@ async function run() {
 
     app.delete(
       "/admin/books/:id",
+      verifyJwt,
+      requireRole("admin"),
       async (req, res) => {
         try {
           const objectId = getObjectId(
@@ -454,11 +561,44 @@ async function run() {
       }
     );
 
+
+    // =========================================================
+    // PUBLIC - LIBRARIANS FOR HOMEPAGE
+    // =========================================================
+
+    app.get("/librarians", async (req, res) => {
+      try {
+        const librarians = await userCollection
+          .find(
+            { role: "librarian" },
+            {
+              projection: {
+                id: 1,
+                name: 1,
+                email: 1,
+                image: 1,
+                role: 1,
+              },
+            }
+          )
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.json(librarians);
+      } catch (error) {
+        console.error("GET LIBRARIANS ERROR:", error);
+
+        res.status(500).json({
+          message: "Failed to fetch librarians",
+        });
+      }
+    });
+
     // =========================================================
     // ADMIN - USERS
     // =========================================================
 
-    app.get("/users", async (req, res) => {
+    app.get("/users", verifyJwt, requireRole("admin"), async (req, res) => {
       try {
         const users = await userCollection
           .find({})
@@ -483,7 +623,7 @@ async function run() {
     // ADMIN - UPDATE USER ROLE
     // =========================================================
 
-    app.patch("/users/:id/role", async (req, res) => {
+    app.patch("/users/:id/role", verifyJwt, requireRole("admin"), async (req, res) => {
       try {
         const { id } = req.params;
         const { role } = req.body;
@@ -791,7 +931,7 @@ async function run() {
     // ADD BOOK
     // =========================================================
 
-    app.post("/books", async (req, res) => {
+    app.post("/books", verifyJwt, requireRole("librarian"), async (req, res) => {
       try {
         const {
           title,
@@ -879,7 +1019,7 @@ async function run() {
     // UPDATE BOOK
     // =========================================================
 
-    app.put("/books/:id", async (req, res) => {
+    app.put("/books/:id", verifyJwt, requireRole("librarian"), async (req, res) => {
       try {
         const objectId = getObjectId(
           req.params.id
@@ -969,6 +1109,8 @@ async function run() {
 
     app.patch(
       "/books/:id/status",
+      verifyJwt,
+      requireRole("librarian"),
       async (req, res) => {
         try {
           const objectId = getObjectId(req.params.id);
@@ -1057,6 +1199,8 @@ async function run() {
 
     app.patch(
       "/books/:id/publish",
+      verifyJwt,
+      requireRole("librarian"),
       async (req, res) => {
         try {
           const objectId = getObjectId(req.params.id);
@@ -1167,6 +1311,8 @@ async function run() {
 
     app.delete(
       "/books/:id",
+      verifyJwt,
+      requireRole("librarian"),
       async (req, res) => {
         try {
           const objectId = getObjectId(
@@ -1242,6 +1388,7 @@ async function run() {
 
     app.post(
       "/create-checkout-session",
+      verifyJwt,
       async (req, res) => {
         try {
           const {
@@ -1397,6 +1544,7 @@ async function run() {
 
     app.get(
       "/verify-payment/:sessionId",
+      verifyJwt,
       async (req, res) => {
         try {
           const session =
@@ -1605,6 +1753,7 @@ async function run() {
 
     app.get(
       "/deliveries",
+      verifyJwt,
       async (req, res) => {
         try {
           const {
@@ -1706,6 +1855,8 @@ async function run() {
 
     app.patch(
       "/deliveries/:id/status",
+      verifyJwt,
+      requireRole("librarian"),
       async (req, res) => {
         try {
           const objectId =
@@ -1899,6 +2050,8 @@ async function run() {
 
     app.post(
       "/reviews",
+      verifyJwt,
+      requireRole("user"),
       async (req, res) => {
         try {
           const {
@@ -2104,6 +2257,8 @@ async function run() {
 
     app.get(
       "/transactions",
+      verifyJwt,
+      requireRole("admin"),
       async (req, res) => {
         try {
           const {
