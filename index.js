@@ -1754,61 +1754,90 @@ async function run() {
     app.get(
       "/deliveries",
       verifyJwt,
-      requireRole("librarian"),
       async (req, res) => {
         try {
-          // JWT থেকে logged-in librarian-এর ID নেওয়া হবে
-          const librarianId = String(req.user.sub);
+          const loggedInUserId = String(req.user.sub);
+          const userRole = req.user.role;
 
-          // শুধু নিজের delivery
-          const query = {
-            librarianId,
-          };
+          let query = {};
 
-          const deliveries = await deliveryCollection
-            .find(query)
-            .sort({
-              createdAt: -1,
-            })
-            .toArray();
+          // ---------------------------------------------------
+          // USER → শুধু নিজের deliveries
+          // ---------------------------------------------------
+          if (userRole === "user") {
+            query = {
+              userId: loggedInUserId,
+            };
+          }
 
-          const deliveriesWithBooks = await Promise.all(
-            deliveries.map(async (delivery) => {
-              let book = null;
+          // ---------------------------------------------------
+          // LIBRARIAN → শুধু নিজের library-এর deliveries
+          // ---------------------------------------------------
+          else if (userRole === "librarian") {
+            query = {
+              librarianId: loggedInUserId,
+            };
+          }
 
-              if (
-                delivery.bookId &&
-                isValidId(delivery.bookId)
-              ) {
-                book = await bookCollection.findOne({
-                  _id: new ObjectId(delivery.bookId),
-                });
-              }
+          // ---------------------------------------------------
+          // অন্য role হলে access denied
+          // ---------------------------------------------------
+          else {
+            return res.status(403).json({
+              message:
+                "You do not have permission to access deliveries",
+            });
+          }
 
-              const user = await getUser(
-                delivery.userId
-              );
+          const deliveries =
+            await deliveryCollection
+              .find(query)
+              .sort({
+                createdAt: -1,
+              })
+              .toArray();
 
-              return {
-                ...delivery,
+          const deliveriesWithBooks =
+            await Promise.all(
+              deliveries.map(async (delivery) => {
+                let book = null;
 
-                bookTitle:
-                  book?.title ||
-                  delivery.bookTitle ||
-                  "Book Delivery",
+                if (
+                  delivery.bookId &&
+                  isValidId(delivery.bookId)
+                ) {
+                  book =
+                    await bookCollection.findOne({
+                      _id: new ObjectId(
+                        delivery.bookId
+                      ),
+                    });
+                }
 
-                coverImage:
-                  book?.coverImage || "",
+                const user = await getUser(
+                  delivery.userId
+                );
 
-                userName:
-                  user?.name ||
-                  "Unknown User",
+                return {
+                  ...delivery,
 
-                userEmail:
-                  user?.email || "",
-              };
-            })
-          );
+                  bookTitle:
+                    book?.title ||
+                    delivery.bookTitle ||
+                    "Book Delivery",
+
+                  coverImage:
+                    book?.coverImage || "",
+
+                  userName:
+                    user?.name ||
+                    "Unknown User",
+
+                  userEmail:
+                    user?.email || "",
+                };
+              })
+            );
 
           res.json(deliveriesWithBooks);
         } catch (error) {
