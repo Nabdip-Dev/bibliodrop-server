@@ -1382,6 +1382,266 @@ async function run() {
       }
     );
 
+
+    // =========================================================
+    // STRIPE - CREATE PAYMENT INTENT
+    // =========================================================
+
+    app.post(
+      "/create-payment-intent",
+      verifyJwt,
+      requireRole("user"),
+      async (req, res) => {
+        try {
+          const { bookId, quantity = 1 } = req.body;
+
+          if (!bookId) {
+            return res.status(400).json({
+              message: "bookId is required",
+            });
+          }
+
+          const objectId = getObjectId(bookId);
+
+          if (!objectId) {
+            return res.status(400).json({
+              message: "Invalid book ID",
+            });
+          }
+
+          const book = await bookCollection.findOne({
+            _id: objectId,
+          });
+
+          if (!book) {
+            return res.status(404).json({
+              message: "Book not found",
+            });
+          }
+
+          if (
+            book.approvalStatus !== "approved" ||
+            book.published !== true
+          ) {
+            return res.status(400).json({
+              message: "This book is not available for delivery",
+            });
+          }
+
+          if (book.status !== "available") {
+            return res.status(400).json({
+              message: "This book is currently unavailable",
+            });
+          }
+
+          const safeQuantity = Math.max(
+            1,
+            Math.min(10, Number(quantity) || 1)
+          );
+
+          const deliveryFee = Number(book.deliveryFee) || 0;
+          const totalAmount = deliveryFee * safeQuantity;
+
+          if (totalAmount <= 0) {
+            return res.status(400).json({
+              message: "Invalid delivery fee",
+            });
+          }
+
+          const paymentIntent =
+            await stripe.paymentIntents.create({
+              amount: Math.round(totalAmount * 100),
+              currency: "inr",
+              automatic_payment_methods: {
+                enabled: true,
+              },
+              metadata: {
+                bookId: String(bookId),
+                userId: String(req.user.sub),
+                quantity: String(safeQuantity),
+              },
+            });
+
+          res.json({
+            success: true,
+            clientSecret: paymentIntent.client_secret,
+            paymentIntentId: paymentIntent.id,
+            amount: totalAmount,
+            book: {
+              id: String(book._id),
+              title: book.title,
+              deliveryFee,
+            },
+          });
+        } catch (error) {
+          console.error(
+            "CREATE PAYMENT INTENT ERROR:",
+            error
+          );
+
+          res.status(500).json({
+            message: "Failed to create payment intent",
+          });
+        }
+      }
+    );
+
+    // =========================================================
+    // STRIPE - CONFIRM PAYMENT
+    // =========================================================
+
+    app.post(
+      "/confirm-payment/:paymentIntentId",
+      verifyJwt,
+      requireRole("user"),
+      async (req, res) => {
+        try {
+          const { paymentIntentId } = req.params;
+
+          if (!paymentIntentId) {
+            return res.status(400).json({
+              message: "Payment intent ID is required",
+            });
+          }
+
+          const paymentIntent =
+            await stripe.paymentIntents.retrieve(
+              paymentIntentId
+            );
+
+          if (paymentIntent.status !== "succeeded") {
+            return res.status(400).json({
+              message: "Payment has not been completed",
+              status: paymentIntent.status,
+            });
+          }
+
+          const bookId = paymentIntent.metadata?.bookId;
+          const userId = String(req.user.sub);
+          const quantity =
+            Number(paymentIntent.metadata?.quantity) || 1;
+
+          if (!bookId) {
+            return res.status(400).json({
+              message: "Book information is missing",
+            });
+          }
+
+          // Prevent duplicate delivery
+          const existingDelivery =
+            await deliveryCollection.findOne({
+              paymentIntentId: paymentIntent.id,
+            });
+
+          if (existingDelivery) {
+            return res.json({
+              success: true,
+              message: "Payment already processed",
+              delivery: existingDelivery,
+            });
+          }
+
+          const objectId = getObjectId(bookId);
+
+          if (!objectId) {
+            return res.status(400).json({
+              message: "Invalid book ID",
+            });
+          }
+
+          const book = await bookCollection.findOne({
+            _id: objectId,
+          });
+
+          if (!book) {
+            return res.status(404).json({
+              message: "Book not found",
+            });
+          }
+
+          // Make sure this payment belongs to the logged-in user
+          if (
+            paymentIntent.metadata?.userId !== userId
+          ) {
+            return res.status(403).json({
+              message: "Payment ownership mismatch",
+            });
+          }
+
+          const delivery = {
+            paymentIntentId: paymentIntent.id,
+            userId,
+            librarianId: book.librarianId || "",
+            bookId: String(book._id),
+            bookTitle: book.title,
+            quantity,
+            deliveryFee:
+              Number(paymentIntent.amount_received || 0) /
+              100,
+            status: "Pending",
+            paymentStatus: "Paid",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+
+          const deliveryResult =
+            await deliveryCollection.insertOne(
+              delivery
+            );
+
+          // Mark book as checked out
+          await bookCollection.updateOne(
+            {
+              _id: objectId,
+              status: "available",
+            },
+            {
+              $set: {
+                status: "checked_out",
+                updatedAt: new Date(),
+              },
+            }
+          );
+
+          // Save transaction
+          await transactionCollection.insertOne({
+            paymentIntentId: paymentIntent.id,
+            userId,
+            librarianId: book.librarianId || "",
+            bookId: String(book._id),
+            bookTitle: book.title,
+            amount:
+              Number(paymentIntent.amount_received || 0) /
+              100,
+            currency: "INR",
+            status: "Paid",
+            type: "Delivery Fee",
+            createdAt: new Date(),
+          });
+
+          res.json({
+            success: true,
+            message:
+              "Payment successful and delivery created",
+            delivery: {
+              _id: deliveryResult.insertedId,
+              ...delivery,
+            },
+          });
+        } catch (error) {
+          console.error(
+            "CONFIRM PAYMENT ERROR:",
+            error
+          );
+
+          res.status(500).json({
+            message:
+              "Failed to confirm payment",
+          });
+        }
+      }
+    );
+
     // =========================================================
     // CREATE STRIPE CHECKOUT
     // =========================================================
