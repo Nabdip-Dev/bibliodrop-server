@@ -1975,6 +1975,98 @@ async function run() {
     );
 
     // =========================================================
+    // USER - CANCEL PENDING DELIVERY
+    // =========================================================
+
+    app.patch(
+      "/deliveries/:id/cancel",
+      verifyJwt,
+      requireRole("user"),
+      async (req, res) => {
+        try {
+          const objectId = getObjectId(req.params.id);
+
+          if (!objectId) {
+            return res.status(400).json({
+              message: "Invalid delivery ID",
+            });
+          }
+
+          const userId = String(req.user.sub);
+
+          // শুধু নিজের delivery + Pending অবস্থায় খুঁজবে
+          const delivery = await deliveryCollection.findOne({
+            _id: objectId,
+            userId,
+            status: "Pending",
+          });
+
+          if (!delivery) {
+            return res.status(404).json({
+              message:
+                "Delivery not found, already processed, or you do not have permission to cancel it",
+            });
+          }
+
+          const result = await deliveryCollection.updateOne(
+            {
+              _id: objectId,
+              userId,
+              status: "Pending",
+            },
+            {
+              $set: {
+                status: "Cancelled",
+                updatedAt: new Date(),
+              },
+            }
+          );
+
+          if (result.matchedCount === 0) {
+            return res.status(404).json({
+              message:
+                "Delivery could not be cancelled",
+            });
+          }
+
+          // Cancel হলে book আবার available হবে
+          if (
+            delivery.bookId &&
+            isValidId(delivery.bookId)
+          ) {
+            await bookCollection.updateOne(
+              {
+                _id: new ObjectId(delivery.bookId),
+              },
+              {
+                $set: {
+                  status: "available",
+                  updatedAt: new Date(),
+                },
+              }
+            );
+          }
+
+          res.json({
+            success: true,
+            message: "Delivery cancelled successfully",
+            deliveryId: String(delivery._id),
+            status: "Cancelled",
+          });
+        } catch (error) {
+          console.error(
+            "CANCEL DELIVERY ERROR:",
+            error
+          );
+
+          res.status(500).json({
+            message: "Failed to cancel delivery",
+          });
+        }
+      }
+    );
+
+    // =========================================================
     // BOOK REVIEWS
     // =========================================================
 
