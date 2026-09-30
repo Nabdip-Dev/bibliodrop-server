@@ -32,7 +32,7 @@ if (!JWT_SECRET) {
 
 app.use(
   cors({
-    origin: true,
+    origin: process.env.CLIENT_URL || "http://localhost:3000",
     credentials: true,
   })
 );
@@ -178,7 +178,75 @@ async function run() {
         JWT_SECRET,
         { expiresIn: JWT_EXPIRES_IN }
       );
-    };
+    }; app.post("/auth/jwt", (req, res) => {
+      try {
+        if (!JWT_SECRET) {
+          return res.status(500).json({
+            message: "JWT_SECRET is not configured on the server",
+          });
+        }
+
+        const authHeader = req.headers.authorization || "";
+
+        if (!authHeader.startsWith("Bearer ")) {
+          return res.status(401).json({
+            message: "Bootstrap token is required",
+          });
+        }
+
+        const bootstrapToken = authHeader.substring(7);
+
+        const payload = jwt.verify(bootstrapToken, JWT_SECRET, {
+          issuer: "bibliodrop-web",
+          audience: "bibliodrop-backend",
+        });
+
+        if (payload.purpose !== "jwt-bootstrap") {
+          return res.status(401).json({
+            message: "Invalid bootstrap token",
+          });
+        }
+
+        const token = jwt.sign(
+          {
+            sub: String(payload.sub),
+            email: payload.email || "",
+            role: payload.role || "user",
+          },
+          JWT_SECRET,
+          {
+            expiresIn: JWT_EXPIRES_IN,
+          }
+        );
+
+        const isProduction = process.env.NODE_ENV === "production";
+
+        const cookieParts = [
+          `${JWT_COOKIE_NAME}=${encodeURIComponent(token)}`,
+          "HttpOnly",
+          "Path=/",
+          `Max-Age=${60 * 60 * 24 * 7}`,
+          isProduction ? "SameSite=None" : "SameSite=Lax",
+        ];
+
+        if (isProduction) {
+          cookieParts.push("Secure");
+        }
+
+        res.setHeader("Set-Cookie", cookieParts.join("; "));
+
+        return res.status(200).json({
+          success: true,
+          message: "JWT authentication cookie created",
+        });
+      } catch (error) {
+        console.error("JWT BOOTSTRAP VERIFY ERROR:", error);
+
+        return res.status(401).json({
+          message: "Invalid or expired bootstrap token",
+        });
+      }
+    });
 
     // =========================================================
     // HOME
