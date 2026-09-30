@@ -231,6 +231,7 @@ async function run() {
 
         if (isProduction) {
           cookieParts.push("Secure");
+          cookieParts.push("Partitioned");
         }
 
         res.setHeader("Set-Cookie", cookieParts.join("; "));
